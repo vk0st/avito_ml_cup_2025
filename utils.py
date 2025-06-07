@@ -4,6 +4,7 @@ import torch
 from scipy import sparse, linalg
 from scipy.sparse import csr_matrix
 from datetime import timedelta
+import torch
 
 def recall_at(df_true, df_pred, k=40):
     recall =  (df_true[['node', 'cookie']].join(
@@ -111,6 +112,70 @@ def process_in_batches(enc_eval_users, X, G, k, batch_size=100, fill_value=-1, i
     
     return pl.concat(batch_dfs)
 
+def process_batch_w_weight(enc_eval_users, G, X, Gt=None, features_dict=None, weights=None, 
+                    k=100, batch_size=1000, fill_value=-1, 
+                    mask_input=True, use_torch=True):
+    batch_dfs = []
+    enc_eval_users = [i for i in enc_eval_users if i is not None]
+    
+    for start in range(0, len(enc_eval_users), batch_size):
+        end = start + batch_size
+        batch_users = np.array(enc_eval_users[start:end])
+        
+        Xi = X[batch_users]
+        batch_users_idx = Xi.shape[0]
+        batch_indices = np.arange(batch_users_idx)[:, np.newaxis]
+
+        # Calculate predictions
+        predictions = Xi @ G
+        if mask_input:
+            predictions[Xi.nonzero()] = fill_value
+        if weights is not None:
+            predictions *= weights
+
+        # Get top-k indices and scores
+        if use_torch:
+            with torch.no_grad():
+                top_k_scores, top_k_ids = torch.topk(torch.tensor(predictions), k=k)
+                top_k_ids, top_k_scores = top_k_ids.cpu().numpy(), top_k_scores.cpu().numpy()
+        else:
+            top_k_ids = np.argpartition(-predictions, k, axis=1)[:, :k]
+            top_k_scores = predictions[batch_indices, top_k_ids]
+
+        features_data = {}
+        if features_dict is not None:
+            
+            for feature_name, matrix in features_dict.items():
+                Xi_feature = matrix[batch_users]
+                feature_scores = Xi_feature @ G
+                feature_scores = feature_scores[batch_indices, top_k_ids]
+                features_data['score_'+feature_name] = feature_scores
+
+                if Gt is not None:
+                    Xi_feature = matrix[batch_users]
+                    feature_scores = Xi_feature @ Gt
+                    feature_scores = feature_scores[batch_indices, top_k_ids]
+                    features_data['score_20_'+feature_name] = feature_scores     
+
+        # Prepare DataFrame data
+        data = {
+            'le_cookie': batch_users,
+            'le_node': top_k_ids,
+            'score': top_k_scores
+        }
+        data.update(features_data)
+
+        explode_columns = ['le_node', 'score']
+        if features_dict is not None:
+            features = ['score_'+f for f in list(features_dict.keys())]
+            if Gt is not None:
+                features += ['score_20_'+f for f in list(features_dict.keys())]
+            explode_columns += features
+
+        df_pred = pl.DataFrame(data).explode(explode_columns)
+        batch_dfs.append(df_pred)
+        
+    return pl.concat(batch_dfs)
 
 def get_dataset(recs, k_recs=200, max_pos=100, max_neg=30, seed=42, df_eval=None):
     """ 
