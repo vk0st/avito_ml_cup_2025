@@ -65,7 +65,7 @@ class RDLAE(BaseAutoencoder):
         G = (X.T.dot(X)).toarray(order="C")
         gamma = np.diag(G) * self.drop_p / (1 - self.drop_p) + self.reg_p
         G[np.diag_indices(G.shape[0])] += gamma
-        G = np.linalg.inv(G, overwrite_a=True)
+        G = np.linalg.inv(G) #, overwrite_a=True)
         diag_C = np.diag(G)
         condition = (1 - gamma * diag_C) > self.xi
         assert condition.sum() > 0

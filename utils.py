@@ -233,3 +233,11 @@ def truncate(G, k=20):
         return np.where(mask, G, 0.0) 
     else:
         return G
+    
+
+def cast_dtypes(df):
+    columns = ['cookie', 'node', 'category', 'location']
+    for column in columns:
+        if column in df.columns:
+            df = df.with_columns(pl.col(column).cast(pl.Int64))
+    return df.with_columns()
